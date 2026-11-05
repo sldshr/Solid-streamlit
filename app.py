@@ -1,293 +1,198 @@
 import streamlit as st
-import time
+import requests
+import os
 import random
-import uuid
-from datetime import datetime
+import json
+import urllib.parse
 
-# ============================================================
-# НАСТРОЙКА СТРАНИЦЫ
-# ============================================================
-st.set_page_config(
-    page_title="AI Chat",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# Настройка страницы
+st.set_page_config(page_title="Solid Community", page_icon="📝", layout="wide")
 
-# ============================================================
-# CSS СТИЛИ
-# ============================================================
-st.markdown("""
-<style>
-    /* Основной фон */
-    .stApp {
-        background: linear-gradient(135deg, #0f0c29 0%, #1a1a2e 50%, #16213e 100%);
+# Инициализация состояния
+if "lang" not in st.session_state:
+    st.session_state.lang = "EN"
+
+# Словарь переводов
+T = {
+    "EN": {
+        "title": "Solid Community",
+        "tab_editor": "✍️ Editor",
+        "tab_news": "📰 News",
+        "tab_ai": "🤖 AI Prompt",
+        "publish": "Publish",
+        "content": "Write your post here...",
+        "type_select": "Publication type",
+        "type_post": "Post",
+        "type_news": "News",
+        "success": "Successfully published!",
+        "link": "Link to your publication",
+        "news_title": "Project News",
+        "no_news": "No news yet.",
+        "ai_title": "AI Prompt Generator",
+        "ai_desc": "Enter your idea and generate a perfect prompt for AI.",
+        "ai_input": "Your idea (e.g. Guide to Python)",
+        "ai_gen": "Generate Prompt",
+        "ai_out": "Generated Prompt",
+        "lang": "Language"
+    },
+    "RU": {
+        "title": "Solid Community",
+        "tab_editor": "✍️ Редактор",
+        "tab_news": "📰 Новости",
+        "tab_ai": "🤖 ИИ Промпт",
+        "publish": "Опубликовать",
+        "content": "Напишите ваш пост здесь...",
+        "type_select": "Тип публикации",
+        "type_post": "Статья",
+        "type_news": "Новость",
+        "success": "Успешно опубликовано!",
+        "link": "Ссылка на вашу публикацию",
+        "news_title": "Новости проекта",
+        "no_news": "Новостей пока нет.",
+        "ai_title": "Генератор промптов для ИИ",
+        "ai_desc": "Введите идею и сгенерируйте идеальный промпт для ИИ.",
+        "ai_input": "Ваша идея (например: Гайд по Python)",
+        "ai_gen": "Сгенерировать промпт",
+        "ai_out": "Готовый промпт",
+        "lang": "Язык"
     }
+}
 
-    /* Скрыть дефолтный header/footer */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
+def t(key):
+    return T[st.session_state.lang][key]
 
-    /* Сообщения чата */
-    .chat-message {
-        padding: 16px 20px;
-        border-radius: 16px;
-        margin: 10px 0;
-        display: flex;
-        gap: 12px;
-        animation: fadeIn 0.3s ease-in;
-        max-width: 90%;
+# Функция для работы с Supabase
+def db_request(path, method="GET", payload=None):
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_KEY", "")
+    
+    if not url or not key:
+        st.error("Supabase is not configured. Please set SUPABASE_URL and SUPABASE_KEY.")
+        return None
+
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
     }
+    
+    try:
+        if method == "GET":
+            r = requests.get(f"{url}/rest/v1/{path}", headers=headers)
+        elif method == "POST":
+            r = requests.post(f"{url}/rest/v1/{path}", json=payload, headers=headers)
+        
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        if r.text:
+            return r.json()
+        return True
+    except Exception as e:
+        st.error(f"Database error: {e}")
+        return None
 
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(6px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    .chat-user {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        margin-left: auto;
-        border-bottom-right-radius: 4px;
-    }
-
-    .chat-ai {
-        background: rgba(255, 255, 255, 0.06);
-        color: #e4e4e7;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-bottom-left-radius: 4px;
-    }
-
-    .avatar {
-        width: 34px;
-        height: 34px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 18px;
-        flex-shrink: 0;
-    }
-
-    .avatar-user { background: rgba(255,255,255,0.2); }
-    .avatar-ai {
-        background: linear-gradient(135deg, #22c55e, #16a34a);
-    }
-
-    /* Заголовок */
-    .main-title {
-        text-align: center;
-        font-size: 2.4rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #a78bfa, #22d3ee);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 4px;
-    }
-    .main-subtitle {
-        text-align: center;
-        color: #94a3b8;
-        margin-bottom: 30px;
-        font-size: 0.95rem;
-    }
-
-    /* Поле ввода */
-    .stChatInput textarea {
-        background-color: rgba(255, 255, 255, 0.05) !important;
-        color: white !important;
-        border-radius: 24px !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
-    }
-
-    /* Сайдбар */
-    section[data-testid="stSidebar"] {
-        background: rgba(10, 10, 20, 0.95);
-        border-right: 1px solid rgba(255,255,255,0.06);
-    }
-
-    /* Кнопки в сайдбаре */
-    .stButton > button {
-        width: 100%;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.1);
-        background: rgba(255,255,255,0.04);
-        color: #e4e4e7;
-        transition: all 0.2s ease;
-        text-align: left;
-        padding: 8px 12px;
-    }
-    .stButton > button:hover {
-        background: rgba(139, 92, 246, 0.2);
-        border-color: #8b5cf6;
-        color: white;
-    }
-
-    /* Кнопка "Новый чат" */
-    div[data-testid="stButton"]:has(button[kind="primary"]) button {
-        background: linear-gradient(135deg, #8b5cf6, #06b6d4);
-        border: none;
-        font-weight: 600;
-        text-align: center;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
-# ============================================================
-# СОСТОЯНИЕ (SESSION STATE)
-# ============================================================
-def new_chat_id() -> str:
-    return str(uuid.uuid4())
-
-
-if "chats" not in st.session_state:
-    # chats: {chat_id: {"title": str, "messages": [ {role, content} ]}}
-    st.session_state.chats = {}
-
-if "current_chat" not in st.session_state:
-    cid = new_chat_id()
-    st.session_state.chats[cid] = {"title": "Новый чат", "messages": []}
-    st.session_state.current_chat = cid
-
-
-# ============================================================
-# ЗАГЛУШКА ИИ (замените эту функцию на реальный вызов)
-# ============================================================
-def fake_ai_response(user_text: str) -> str:
-    """Имитация ответа ИИ. Замените на реальный API-вызов."""
-    time.sleep(1.0)  # имитация задержки
-
-    responses = [
-        f"Я получил ваш запрос: **«{user_text}»**.\n\n"
-        f"Это заглушка — реальная интеграция с моделью пока не подключена. "
-        f"Но интерфейс полностью готов к тому, чтобы вы вставили сюда вызов "
-        f"OpenAI / Anthropic / локальной модели.",
-
-        f"Интересный вопрос! 🤔\n\n"
-        f"Вы написали: `{user_text}`.\n\n"
-        f"Это демо-ответ. Чтобы подключить настоящий ИИ — "
-        f"отредактируйте функцию `fake_ai_response()` в коде.",
-
-        f"Принято! 📨\n\n"
-        f"- Ваш текст: {user_text}\n"
-        f"- Длина: {len(user_text)} символов\n"
-        f"- Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
-        f"_Это автоматическая заглушка вместо ответа ИИ._",
-    ]
-    return random.choice(responses)
-
-
-# ============================================================
-# ФУНКЦИЯ РЕНДЕРА СООБЩЕНИЯ
-# ============================================================
-def render_message(role: str, content: str):
-    if role == "user":
-        st.markdown(f"""
-        <div class="chat-message chat-user">
-            <div class="avatar avatar-user">👤</div>
-            <div>{content}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div class="chat-message chat-ai">
-            <div class="avatar avatar-ai">🤖</div>
-            <div>{content}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-# ============================================================
-# БОКОВАЯ ПАНЕЛЬ
-# ============================================================
+# Боковая панель
 with st.sidebar:
-    st.markdown("### 🤖 **AI Chat**")
-    st.caption("Демо-интерфейс")
-
-    if st.button("➕ Новый чат", type="primary", use_container_width=True):
-        cid = new_chat_id()
-        st.session_state.chats[cid] = {"title": "Новый чат", "messages": []}
-        st.session_state.current_chat = cid
+    st.title("Solid Community")
+    lang_choice = st.radio(t("lang"), ["EN", "RU"], index=0 if st.session_state.lang == "EN" else 1)
+    if lang_choice != st.session_state.lang:
+        st.session_state.lang = lang_choice
         st.rerun()
 
-    st.markdown("---")
-    st.markdown("**История чатов**")
+# Проверка параметра для просмотра поста
+query_params = st.query_params
+if "post" in query_params:
+    slug = query_params["post"]
+    res = db_request(f"posts?slug=eq.{slug}&select=content,created_at")
+    
+    if res and len(res) > 0:
+        st.title(f"Post #{slug}")
+        st.caption(f"Published at: {res[0]['created_at'][:10]}")
+        st.divider()
+        st.markdown(res[0]["content"])
+        st.divider()
+        if st.button("← Back to Home"):
+            st.query_params.clear()
+            st.rerun()
+    else:
+        st.error("Post not found.")
+        if st.button("← Back to Home"):
+            st.query_params.clear()
+            st.rerun()
+    st.stop()
 
-    # Список чатов (сначала новые)
-    for cid, chat in list(st.session_state.chats.items())[::-1]:
-        title = chat["title"][:28] + ("…" if len(chat["title"]) > 28 else "")
-        is_active = cid == st.session_state.current_chat
-        prefix = "🟣" if is_active else "💬"
+# Главная страница с вкладками
+st.title(t("title"))
 
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            if st.button(f"{prefix} {title}", key=f"chat_{cid}", use_container_width=True):
-                st.session_state.current_chat = cid
-                st.rerun()
-        with col2:
-            if st.button("🗑", key=f"del_{cid}", help="Удалить чат"):
-                del st.session_state.chats[cid]
-                if st.session_state.current_chat == cid:
-                    if st.session_state.chats:
-                        st.session_state.current_chat = list(st.session_state.chats.keys())[0]
-                    else:
-                        new_id = new_chat_id()
-                        st.session_state.chats[new_id] = {"title": "Новый чат", "messages": []}
-                        st.session_state.current_chat = new_id
-                st.rerun()
+tab1, tab2, tab3 = st.tabs([t("tab_editor"), t("tab_news"), t("tab_ai")])
 
-    st.markdown("---")
-    st.caption("⚠️ Это интерфейс без ИИ. Подключите свою модель в `fake_ai_response()`.")
+# --- ВКЛАДКА РЕДАКТОРА ---
+with tab1:
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        content = st.text_area(t("content"), height=400)
+        pub_type = st.selectbox(t("type_select"), [t("type_post"), t("type_news")])
+        btn_publish = st.button(t("publish"), type="primary", use_container_width=True)
+        
+    with col2:
+        st.markdown("### Live Preview")
+        st.markdown(content if content else "*Nothing to preview yet...*")
+    
+    if btn_publish:
+        if content.strip():
+            new_slug = str(random.randint(10000, 99999))
+            db_type = "post" if pub_type == t("type_post") else "news"
+            
+            payload = {"slug": new_slug, "content": content, "type": db_type}
+            res = db_request("posts", "POST", payload)
+            
+            if res:
+                st.success(t("success"))
+                st.markdown(f"**{t('link')}:** [{new_slug}](/?post={new_slug})")
+        else:
+            st.warning("Content cannot be empty.")
 
+# --- ВКЛАДКА НОВОСТЕЙ ---
+with tab2:
+    st.header(t("news_title"))
+    res = db_request("posts?type=eq.news&select=slug,content,created_at&order=created_at.desc")
+    
+    if res and len(res) > 0:
+        for item in res:
+            with st.expander(f"News #{item['slug']} - {item['created_at'][:10]}", expanded=False):
+                st.markdown(item["content"])
+    else:
+        st.info(t("no_news"))
 
-# ============================================================
-# ОСНОВНОЙ ЭКРАН
-# ============================================================
-chat = st.session_state.chats[st.session_state.current_chat]
+# --- ВКЛАДКА ИИ ---
+with tab3:
+    st.header(t("ai_title"))
+    st.write(t("ai_desc"))
+    
+    idea = st.text_input(t("ai_input"))
+    
+    if st.button(t("ai_gen")) and idea.strip():
+        prompt_template = f"""You are a Markdown expert. Write the raw text for an article on the topic: "{idea}".
 
-# Заголовок
-st.markdown('<div class="main-title">AI Chat</div>', unsafe_allow_html=True)
-st.markdown('<div class="main-subtitle">Интерфейс готов · Модель не подключена</div>',
-            unsafe_allow_html=True)
+IMPORTANT: Your response will be inserted into a custom Markdown parser. Do not try to format the text for chat, do not use HTML. Just output raw text using STRICTLY these elements:
+- Headings from 1 to 6 levels (e.g., # Heading, ## Subheading).
+- Regular paragraphs of text.
+- Lists: bulleted (-, *, +) and numbered (1., 2.).
+- Quotes (starting with the > symbol).
+- Horizontal rules (---, ***, ___).
+- Text formatting: **bold**, *italic*, ~~strikethrough~~, `inline code`.
+- Links: [link text](https://example.com).
 
-# Приветствие при пустом чате
-if not chat["messages"]:
-    st.markdown("""
-    <div style="text-align:center; padding: 40px 20px; color:#94a3b8;">
-        <div style="font-size: 56px; margin-bottom: 12px;">💬</div>
-        <div style="font-size: 1.1rem; margin-bottom: 6px;">
-            Начните диалог — напишите что-нибудь ниже
-        </div>
-        <div style="font-size: 0.85rem; opacity: 0.7;">
-            (Ответы — заглушки, пока не подключена реальная модель)
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+PROHIBITED:
+- Using HTML tags.
+- Building tables.
+- Inserting images.
+- Using code blocks (triple backticks).
 
-# История сообщений
-for msg in chat["messages"]:
-    render_message(msg["role"], msg["content"])
-
-# Поле ввода
-user_input = st.chat_input("Напишите сообщение…")
-
-if user_input:
-    # 1. Добавляем сообщение пользователя
-    chat["messages"].append({"role": "user", "content": user_input})
-
-    # Обновляем заголовок чата по первому сообщению
-    if chat["title"] == "Новый чат":
-        chat["title"] = user_input[:40]
-
-    # 2. Показываем сообщение пользователя
-    render_message("user", user_input)
-
-    # 3. Генерируем "ответ ИИ" (заглушка)
-    with st.spinner("Думаю…"):
-        ai_reply = fake_ai_response(user_input)
-
-    chat["messages"].append({"role": "assistant", "content": ai_reply})
-    render_message("assistant", ai_reply)
-
-    st.rerun()
+Volume requirement: up to 10,000 characters.
+Output ONLY the raw Markdown text, without introductions or explanations."""
+        
+        st.text_area(t("ai_out"), value=prompt_template, height=300)
